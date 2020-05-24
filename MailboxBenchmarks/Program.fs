@@ -1,6 +1,7 @@
 ﻿// Learn more about F# at http://fsharp.org
 
 open System
+open System.Threading.Channels
 open System.Threading.Tasks
 open BenchmarkDotNet.Attributes
 open BenchmarkDotNet.Configs
@@ -8,10 +9,20 @@ open BenchmarkDotNet.Diagnosers
 open BenchmarkDotNet.Engines
 open BenchmarkDotNet.Loggers
 open BenchmarkDotNet.Running
+open FSharp.Control.Tasks
+open MailboxBenchmarks.CSharp
+open MailboxBenchmarks.Shared
+open Hopac
+open Hopac.Infixes
 
-type Message =
-  | Unit
-  | Done of TaskCompletionSource<unit>
+#nowarn "42"
+type Actor<'m> = Mailbox<'m>
+
+module Hopac =
+  let actor (body: Mailbox<'m> -> Job<unit>) : Job<Actor<'m>> =
+    Job.delay <| fun () ->
+      let mA = Mailbox ()
+      Job.start (body mA) >>-. mA
 
 [<SimpleJob(RunStrategy.Monitoring, launchCount = 1, warmupCount = 1, targetCount = 1)>]
 [<MemoryDiagnoser>]
@@ -20,7 +31,7 @@ type MailboxBenchmarks() =
   let mutable countAgents = 0
   let mutable countMessages = 0
   
-  [<Params(100_000, 1)>]
+  [<Params(100_000, 4)>]
   member x.CountAgents
     with get() = countAgents
     and set(v) = countAgents <- v
@@ -30,16 +41,65 @@ type MailboxBenchmarks() =
   member x.CountMessages
     with get() = countMessages
     and set(v) = countMessages <- v
+  
+  [<Benchmark>]
+  member x.Hopac() =
+    async {
+      let loop (mailbox: Hopac.Mailbox<_>) =
+        job {
+          match! mailbox with
+          | Message.Done tcs ->
+            tcs.SetResult(())
+          | _ -> ()
+        }
+        |> Job.foreverServer
+        |> start
 
+      let agents =
+        [|
+          for _ in 1 .. x.CountAgents do
+            let processor = Hopac.Mailbox()
+            loop processor
+            processor
+        |]
+      
+      let random = Random x.CountMessages
+      
+      for _ = 1 to x.CountMessages do
+        let t = random.Next(0, x.CountAgents - 1)
+        let mb = agents.[t]
+        Mailbox.send mb Message.Unit |> start
+        
+      let tcs =
+        [|
+          for i in 0 .. x.CountAgents - 1 do
+            let t = TaskCompletionSource()
+            Mailbox.send agents.[i] (Message.Done t) |> start
+            
+            t.Task
+        |]
+      
+      do! Task.WhenAll(tcs) |> Async.AwaitTask |> Async.Ignore
+    } |> Async.StartAsTask
+    
+  // [<Benchmark>]
+  member x.MailboxProcessorCSharpTask() =
+    MailboxBenchmarksCSharp().MailboxProcessorCSharpTask(x.CountAgents, x.CountMessages)
+  
   [<Benchmark>]
   member x.MailboxProcessorRecursion() =
     async {
       let loop (inbox: MailboxProcessor<Message>) =
         let rec loop =
-          async {
-            match! inbox.Receive() with
+          let proc msg =
+            match msg with
             | Unit -> ()
             | Done tcs -> tcs.SetResult(())
+            
+          async {
+            let! msg = inbox.Receive()
+            proc msg
+            
             return! loop
           }
         loop
@@ -65,6 +125,40 @@ type MailboxBenchmarks() =
       
       do! Task.WhenAll(tcs) |> Async.AwaitTask |> Async.Ignore
     } |> Async.StartAsTask
+  
+  [<Benchmark>]
+  member x.Channel() =
+    task {
+      let createMailbox () =
+        let channel = Channel.CreateUnbounded<Message>()
+        
+        task {
+          while true do
+            match! channel.Reader.ReadAsync() with
+            | Message.Done tcs -> tcs.SetResult()
+            | _ -> ()
+        } |> ignore
+        
+        channel
+        
+      let agents = [| for _ in 1 .. x.CountAgents do createMailbox () |]
+      
+      let random = Random(x.CountMessages)
+      for _ in 1 .. x.CountMessages do
+        let t = random.Next(0, x.CountAgents - 1)
+        agents.[t].Writer.WriteAsync(Message.Unit) |> ignore
+       
+      let tcs =
+        [|
+          for i in 0 .. x.CountAgents - 1 do
+            let t = TaskCompletionSource()
+            agents.[i].Writer.WriteAsync(Message.Done t) |> ignore
+            t.Task
+        |]
+      
+      let! _ = Task.WhenAll(tcs)
+      ()
+    }
   
   [<Benchmark>]
   member x.MailboxProcessorLoop() =
@@ -102,5 +196,10 @@ let main argv =
       .AddDiagnoser(MemoryDiagnoser.Default)
       .AddDiagnoser(ThreadingDiagnoser.Default)
       .AddLogger(ConsoleLogger.Default)
+      
   BenchmarkRunner.Run<MailboxBenchmarks>() |> ignore
+  // let mb = MailboxBenchmarks()
+  // mb.CountMessages <- 1_000_000
+  // mb.CountAgents <- 1
+  // mb.Channel().Wait()
   0 // return an integer exit code

@@ -4,7 +4,17 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>netcoreapp3.1</TargetFramework>
     </PropertyGroup>
+    
+    <PropertyGroup>
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+        <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    </PropertyGroup>
 
+    <!--
+    <PropertyGroup>
+        <OtherFlags>-REMOVE-standalone</OtherFlags>
+    </PropertyGroup>
+    -->
     <ItemGroup>
         <Compile Include="Program.fs" />
     </ItemGroup>
@@ -13,6 +23,12 @@
       <PackageReference Include="BenchmarkDotNet" Version="0.12.1" />
       <PackageReference Include="Hopac" Version="0.4.1" />
       <PackageReference Include="System.Threading.Channels" Version="4.7.1" />
+      <PackageReference Include="TaskBuilder.fs" Version="2.1.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\MailboxBenchmarks.CSharp\MailboxBenchmarks.CSharp.csproj" />
+      <ProjectReference Include="..\MailboxBenchmarks.Shared\MailboxBenchmarks.Shared.fsproj" />
     </ItemGroup>
 
 </Project>
