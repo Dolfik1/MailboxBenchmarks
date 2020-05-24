@@ -6,6 +6,7 @@
 
     <ItemGroup>
       <PackageReference Include="FSharp.Core" Version="4.7.0" />
+      <PackageReference Include="System.Threading.Channels" Version="4.7.1" />
     </ItemGroup>
 
     <ItemGroup>

@@ -13,25 +13,20 @@ open FSharp.Control.Tasks
 open MailboxBenchmarks.CSharp
 open MailboxBenchmarks.Shared
 open Hopac
-open Hopac.Infixes
 
 #nowarn "42"
-type Actor<'m> = Mailbox<'m>
 
-module Hopac =
-  let actor (body: Mailbox<'m> -> Job<unit>) : Job<Actor<'m>> =
-    Job.delay <| fun () ->
-      let mA = Mailbox ()
-      Job.start (body mA) >>-. mA
-
+[<CsvExporter>]
+[<CsvMeasurementsExporter>]
 [<SimpleJob(RunStrategy.Monitoring, launchCount = 1, warmupCount = 1, targetCount = 1)>]
 [<MemoryDiagnoser>]
+[<RPlotExporter>]
 type MailboxBenchmarks() =
   
   let mutable countAgents = 0
   let mutable countMessages = 0
   
-  [<Params(100_000, 4)>]
+  [<Params(4, 10_000, 100_000)>]
   member x.CountAgents
     with get() = countAgents
     and set(v) = countAgents <- v
@@ -82,10 +77,6 @@ type MailboxBenchmarks() =
       do! Task.WhenAll(tcs) |> Async.AwaitTask |> Async.Ignore
     } |> Async.StartAsTask
     
-  // [<Benchmark>]
-  member x.MailboxProcessorCSharpTask() =
-    MailboxBenchmarksCSharp().MailboxProcessorCSharpTask(x.CountAgents, x.CountMessages)
-  
   [<Benchmark>]
   member x.MailboxProcessorRecursion() =
     async {
@@ -125,6 +116,10 @@ type MailboxBenchmarks() =
       
       do! Task.WhenAll(tcs) |> Async.AwaitTask |> Async.Ignore
     } |> Async.StartAsTask
+  
+  [<Benchmark>]
+  member x.ChannelCSharp() =
+    MailboxBenchmarksCSharp().ChannelCSharp(x.CountAgents, x.CountMessages);
   
   [<Benchmark>]
   member x.Channel() =
